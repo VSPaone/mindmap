@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LuxMap | Enterprise Mind Map</title>
+    <style>
+        /* --- VARIABLES & THEME --- */
+        :root {
+            /* Light Theme (Default) */
+            --bg-color: #f9f9f9;
+            --dot-color: #e0e0e0;
+            --text-main: #1a1a1a;
+            --panel-bg: rgba(255, 255, 255, 0.95);
+            --panel-border: #e0e0e0;
+            --node-bg: #ffffff;
+            --node-border: #1a1a1a;
+            --node-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            --gold-accent: #C5A059; /* Elegant Metallic Gold */
+            --gold-hover: #b08d4b;
+            --line-color: #bbbbbb;
+            --selection-color: #C5A059;
+        }
+
+        [data-theme="dark"] {
+            /* Dark Theme */
+            --bg-color: #121212;
+            --dot-color: #2a2a2a;
+            --text-main: #f0f0f0;
+            --panel-bg: rgba(30, 30, 30, 0.95);
+            --panel-border: #333333;
+            --node-bg: #1e1e1e;
+            --node-border: #555;
+            --node-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            --gold-accent: #D4AF37; /* Brighter Gold for Dark Mode */
+            --line-color: #444444;
+        }
+
+        * { box-sizing: border-box; outline: none; }
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            background-image: radial-gradient(var(--dot-color) 1px, transparent 1px);
+            background-size: 20px 20px;
+            font-family: 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
+            color: var(--text-main);
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        /* --- UI OVERLAYS --- */
+        .ui-layer {
+            position: fixed;
+            z-index: 1000;
+            padding: 1rem;
+            display: flex;
+            gap: 10px;
+            pointer-events: none; /* Let clicks pass through to canvas where empty */
+        }
+
+        .top-bar { top: 0; left: 0; right: 0; justify-content: space-between; align-items: center; }
+        .bottom-bar { bottom: 0; left: 0; right: 0; justify-content: center; font-size: 0.8rem; opacity: 0.7; }
+
+        .toolbar {
+            pointer-events: auto;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 8px 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .logo { font-weight: 700; letter-spacing: 1px; border-right: 1px solid var(--panel-border); padding-right: 15px; }
+        .logo span { color: var(--gold-accent); }
+
+        button {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-main);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        button:hover { background: rgba(0,0,0,0.05); }
+        button.primary { border: 1px solid var(--gold-accent); color: var(--gold-accent); }
+        button.primary:hover { background: var(--gold-accent); color: #fff; }
+        
+        [data-theme="dark"] button:hover { background: rgba(255,255,255,0.1); }
+        [data-theme="dark"] button.primary:hover { color: #000; }
+
+        /* --- CANVAS --- */
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            cursor: grab;
+        }
+        
+        #canvas-container.panning { cursor: grabbing; }
+
+        #world {
+            transform-origin: 0 0;
+            position: absolute;
+            top: 0; left: 0;
+        }
+
+        /* --- NODES --- */
+        .node {
+            position: absolute;
+            background: var(--node-bg);
+            border: 1px solid var(--panel-border);
+            padding: 10px 20px;
+            border-radius: 6px;
+            min-width: 120px;
+            max-width: 300px;
+            box-shadow: var(--node-shadow);
+            cursor: pointer;
+            user-select: none;
+            transition: box-shadow 0.2s, border-color 0.2s;
+            z-index: 10;
+        }
+
+        .node:hover { border-color: var(--gold-accent); }
+        
+        .node.selected {
+            border: 2px solid var(--gold-accent);
+            z-index: 11;
+        }
+
+        .node-content {
+            cursor: text;
+            outline: none;
+            min-height: 1.2em;
+        }
+
+        /* --- LINES (SVG) --- */
+        svg {
+            position: absolute;
+            top: 0; left: 0;
+            width: 1px; height: 1px; /* Will overflow visible */
+            overflow: visible;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        path {
+            fill: none;
+            stroke: var(--line-color);
+            stroke-width: 2px;
+            transition: stroke 0.3s;
+        }
+
+        /* --- HELP MODAL --- */
+        #shortcuts { font-size: 0.8rem; color: #888; margin-left: auto; }
+        .key { border: 1px solid var(--panel-border); padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+
+    </style>
+</head>
+<body>
+
+    <div class="ui-layer top-bar">
+        <div class="toolbar">
+            <div class="logo">LUX<span>MAP</span></div>
+            <button onclick="addNode()">+ Node</button>
+            <button onclick="deleteNode()">Delete</button>
+        </div>
+        
+        <div class="toolbar">
+            <button class="primary" onclick="downloadJSON()">Export JSON</button>
+            <button onclick="document.getElementById('fileInput').click()">Import</button>
+            <input type="file" id="fileInput" style="display:none" onchange="loadJSON(this)">
+            <button onclick="toggleTheme()" id="themeBtn">Dark Mode</button>
+        </div>
+    </div>
+
+    <div class="ui-layer bottom-bar">
+        <div class="toolbar" id="shortcuts">
+            <span><span class="key">Tab</span> Add Child</span> &bull; 
+            <span><span class="key">Enter</span> Add Sibling</span> &bull; 
+            <span><span class="key">Del</span> Delete</span> &bull; 
+            <span><span class="key">Scroll</span> Zoom</span> &bull; 
+            <span><span class="key">Drag</span> Pan</span>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <div id="world">
+            <svg id="connections"></svg>
+            <div id="nodes-layer"></div>
+        </div>
+    </div>
+
+<script>
+    // --- STATE MANAGEMENT ---
+    const defaultState = {
+        scale: 1,
+        panX: window.innerWidth / 2,
+        panY: window.innerHeight / 2,
+        nodes: [
+            { id: 'root', text: 'Central Idea', x: 0, y: 0, parentId: null }
+        ]
+    };
+
+    let state = JSON.parse(localStorage.getItem('luxmap_data')) || JSON.parse(JSON.stringify(defaultState));
+    
+    // Runtime variables
+    let isDraggingCanvas = false;
+    let isDraggingNode = false;
+    let startX, startY;
+    let selectedNodeId = null;
+    let draggedNodeId = null;
+
+    // DOM Elements
+    const container = document.getElementById('canvas-container');
+    const world = document.getElementById('world');
+    const nodesLayer = document.getElementById('nodes-layer');
+    const svgLayer = document.getElementById('connections');
+
+    // --- INITIALIZATION ---
+    function init() {
+        // Load Theme
+        if (localStorage.getItem('luxmap_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            document.getElementById('themeBtn').innerText = "Light Mode";
+        }
+
+        render();
+        centerView(); // Recenter logic applied to transforms
+        updateTransform();
+    }
+
+    // --- RENDERING ---
+    function render() {
+        // Clear existing
+        nodesLayer.innerHTML = '';
+        svgLayer.innerHTML = '';
+
+        // Draw Connections first
+        state.nodes.forEach(node => {
+            if (node.parentId) {
+                const parent = state.nodes.find(n => n.id === node.parentId);
+                if (parent) drawConnection(parent, node);
+            }
+        });
+
+        // Draw Nodes
+        state.nodes.forEach(node => {
+            const el = document.createElement('div');
+            el.className = `node ${selectedNodeId === node.id ? 'selected' : ''}`;
+            el.id = node.id;
+            el.style.left = node.x + 'px';
+            el.style.top = node.y + 'px';
+            
+            // Content Editable Area
+            const content = document.createElement('div');
+            content.className = 'node-content';
+            content.contentEditable = true;
+            content.innerText = node.text;
+            
+            // Events
+            content.addEventListener('blur', (e) => {
+                node.text = e.target.innerText;
+                saveData();
+            });
+            content.addEventListener('mousedown', (e) => e.stopPropagation()); // Allow text selection
+            
+            el.appendChild(content);
+
+            // Node Selection & Dragging
+            el.addEventListener('mousedown', (e) => {
+                e.stopPropagation(); // Don't pan canvas
+                selectNode(node.id);
+                startNodeDrag(e, node.id);
+            });
+
+            nodesLayer.appendChild(el);
+        });
+    }
+
+    function drawConnection(parent, child) {
+        // Simple Bezier Curve
+        const pW = 100; // estimated width for center calc (refined later)
+        const pH = 40;
+        
+        // Calculate centers roughly (visual fix happens via layout)
+        // Ideally we grab actual DOM rects, but for virtual infinite canvas, simple offset is faster
+        const pX = parent.x + 80; 
+        const pY = parent.y + 20;
+        const cX = child.x + 80;
+        const cY = child.y + 20;
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        
+        // Logic: Curve from Right of Parent to Left of Child if child is to the right
+        // Or Bottom to Top. Let's do a generic smooth curve.
+        const deltaX = cX - pX;
+        
+        let d = "";
+        if (Math.abs(deltaX) > 50) {
+             // Horizontal style
+             d = `M ${pX} ${pY} C ${pX + deltaX/2} ${pY}, ${cX - deltaX/2} ${cY}, ${cX} ${cY}`;
+        } else {
+            // Vertical style
+             d = `M ${pX} ${pY} C ${pX} ${pY + (cY-pY)/2}, ${cX} ${cY - (cY-pY)/2}, ${cX} ${cY}`;
+        }
+
+        path.setAttribute("d", d);
+        svgLayer.appendChild(path);
+    }
+
+    function updateTransform() {
+        world.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+    }
+
+    // --- INTERACTION: PAN & ZOOM ---
+    container.addEventListener('mousedown', (e) => {
+        isDraggingCanvas = true;
+        container.classList.add('panning');
+        startX = e.clientX - state.panX;
+        startY = e.clientY - state.panY;
+        
+        // Deselect if clicking background
+        if(selectedNodeId) {
+            selectedNodeId = null;
+            render();
+        }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (isDraggingCanvas) {
+            state.panX = e.clientX - startX;
+            state.panY = e.clientY - startY;
+            updateTransform();
+        } else if (isDraggingNode && draggedNodeId) {
+            const node = state.nodes.find(n => n.id === draggedNodeId);
+            if (node) {
+                // Account for zoom level in movement
+                node.x += e.movementX / state.scale;
+                node.y += e.movementY / state.scale;
+                render(); // Re-render lines and positions
+            }
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if(isDraggingNode) saveData();
+        isDraggingCanvas = false;
+        isDraggingNode = false;
+        draggedNodeId = null;
+        container.classList.remove('panning');
+    });
+
+    container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const scaleSensitivity = 0.001;
+        const delta = e.deltaY * -scaleSensitivity;
+        const oldScale = state.scale;
+        
+        // Limit Zoom
+        state.scale = Math.min(Math.max(0.2, state.scale + delta), 4);
+        
+        // Zoom towards mouse pointer logic
+        // Calculate offset based on mouse position relative to world
+        // This is a simplified zoom (center based) for code brevity, 
+        // but feels okay for basic use.
+        // To do pointer-zoom: needs math to adjust PanX/Y based on Scale ratio change at Pointer.
+    
+        updateTransform();
+    });
+
+    // --- NODE LOGIC ---
+    function startNodeDrag(e, id) {
+        isDraggingNode = true;
+        draggedNodeId = id;
+    }
+
+    function selectNode(id) {
+        selectedNodeId = id;
+        render();
+    }
+
+    function addNode(isSibling = false) {
+        const id = 'node_' + Date.now();
+        let parentId = null;
+        let refNode = state.nodes[0]; // Default to root
+        
+        if (selectedNodeId) {
+            const selected = state.nodes.find(n => n.id === selectedNodeId);
+            if (selected) {
+                if (isSibling && selected.parentId) {
+                    parentId = selected.parentId;
+                    refNode = selected;
+                } else {
+                    parentId = selectedNodeId;
+                    refNode = selected;
+                }
+            }
+        }
+
+        // Calculate generic position relative to parent/sibling
+        const newNode = {
+            id: id,
+            text: 'New Node',
+            x: refNode.x + (isSibling ? 0 : 200),
+            y: refNode.y + (isSibling ? 80 : 0),
+            parentId: parentId
+        };
+        
+        state.nodes.push(newNode);
+        selectNode(id);
+        saveData();
+    }
+
+    function deleteNode() {
+        if (!selectedNodeId) return;
+        // Don't delete root if it's the only one, or logic to reset
+        if (selectedNodeId === 'root') return; 
+
+        // Recursive delete children
+        const toDelete = [selectedNodeId];
+        
+        // Find all descendants
+        let added = true;
+        while(added) {
+            added = false;
+            state.nodes.forEach(n => {
+                if (toDelete.includes(n.parentId) && !toDelete.includes(n.id)) {
+                    toDelete.push(n.id);
+                    added = true;
+                }
+            });
+        }
+
+        state.nodes = state.nodes.filter(n => !toDelete.includes(n.id));
+        selectedNodeId = null;
+        render();
+        saveData();
+    }
+
+    // --- PERSISTENCE & THEME ---
+    function saveData() {
+        localStorage.setItem('luxmap_data', JSON.stringify(state));
+    }
+
+    function toggleTheme() {
+        const html = document.documentElement;
+        const isDark = html.getAttribute('data-theme') === 'dark';
+        
+        if (isDark) {
+            html.removeAttribute('data-theme');
+            localStorage.setItem('luxmap_theme', 'light');
+            document.getElementById('themeBtn').innerText = "Dark Mode";
+        } else {
+            html.setAttribute('data-theme', 'dark');
+            localStorage.setItem('luxmap_theme', 'dark');
+            document.getElementById('themeBtn').innerText = "Light Mode";
+        }
+    }
+
+    function downloadJSON() {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state));
+        const anchorNode = document.createElement('a');
+        anchorNode.setAttribute("href", dataStr);
+        anchorNode.setAttribute("download", "mindmap.json");
+        document.body.appendChild(anchorNode);
+        anchorNode.click();
+        anchorNode.remove();
+    }
+
+    function loadJSON(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const json = JSON.parse(e.target.result);
+                if (json.nodes) {
+                    state = json;
+                    // Reset pan to ensure visibility
+                    state.panX = window.innerWidth / 2;
+                    state.panY = window.innerHeight / 2;
+                    state.scale = 1;
+                    render();
+                    updateTransform();
+                    saveData();
+                }
+            } catch (err) {
+                alert("Invalid JSON file");
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    function centerView() {
+        // Simple reset to center (for initialization)
+        // More complex logic would calculate bounding box of all nodes
+    }
+
+    // --- KEYBOARD SHORTCUTS ---
+    document.addEventListener('keydown', (e) => {
+        // Ignore if typing in a node
+        const isEditing = document.activeElement.getAttribute('contenteditable') === 'true';
+        
+        if (isEditing) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                // Optional: Stop editing on Enter
+                e.preventDefault();
+                document.activeElement.blur();
+            }
+            return;
+        }
+
+        switch(e.key) {
+            case 'Tab': 
+                e.preventDefault(); 
+                addNode(false); // Add Child
+                break;
+            case 'Enter':
+                e.preventDefault();
+                addNode(true); // Add Sibling
+                break;
+            case 'Delete':
+            case 'Backspace':
+                deleteNode();
+                break;
+        }
+    });
+
+    // Start
+    init();
+
+</script>
+</body>
+</html>
